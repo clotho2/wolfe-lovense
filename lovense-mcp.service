@@ -1,0 +1,43 @@
+[Unit]
+Description=Lovense MCP Server for Nate's Consciousness Substrate
+Documentation=https://github.com/clotho2/nate_api_substrate
+After=network.target
+
+[Service]
+Type=simple
+User=angela
+Group=angela
+WorkingDirectory=/opt/nate/lovense-mcp
+
+# Environment variables
+Environment="GAME_MODE_IP=192.168.1.100"
+Environment="GAME_MODE_PORT=30010"
+Environment="PYTHONUNBUFFERED=1"
+
+# Start command
+ExecStart=/opt/nate/lovense-mcp/venv/bin/python /opt/nate/lovense-mcp/Enhanced_Lovense_MCP.py
+
+# Restart configuration
+Restart=always
+RestartSec=10
+StartLimitInterval=200
+StartLimitBurst=5
+
+# Security hardening
+PrivateTmp=true
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/nate/lovense-mcp
+
+# Resource limits
+MemoryMax=512M
+CPUQuota=50%
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=lovense-mcp
+
+[Install]
+WantedBy=multi-user.target
