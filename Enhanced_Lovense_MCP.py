@@ -643,12 +643,13 @@ if __name__ == "__main__":
     try:
         # Load configuration
         config = get_mcp_config()
-        logger.info(f"🎮 Enhanced Lovense MCP Server starting...")
-        logger.info(f"📡 Game Mode: {config['game_mode_ip']}:{config['game_mode_port']}")
-        
-        # Start MCP server
-        mcp.run(transport="stdio")
-        
+        print(f"🎮 Enhanced Lovense MCP Server starting...")
+        print(f"📡 Game Mode: {config['game_mode_ip']}:{config['game_mode_port']}")
+
+        # Start MCP server with SSE transport for persistent operation
+        # This runs an HTTP server that MCP clients can connect to
+        mcp.run(transport="sse")
+
     except Exception as e:
         logger.error(f"❌ Startup failed: {e}")
         sys.exit(1)
