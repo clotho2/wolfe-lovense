@@ -5,9 +5,9 @@ After=network.target
 
 [Service]
 Type=simple
-User=angela
-Group=angela
-WorkingDirectory=/opt/nate/lovense-mcp
+User=root
+Group=root
+WorkingDirectory=/opt/aicara/wolfe-lovense
 
 # Environment variables
 Environment="GAME_MODE_IP=192.168.1.100"
@@ -15,7 +15,7 @@ Environment="GAME_MODE_PORT=30010"
 Environment="PYTHONUNBUFFERED=1"
 
 # Start command
-ExecStart=/opt/nate/lovense-mcp/venv/bin/python /opt/nate/lovense-mcp/Enhanced_Lovense_MCP.py
+ExecStart=/opt/aicara/wolfe-lovense/venv/bin/python /opt/aicara/wolfe-lovense/Enhanced_Lovense_MCP.py
 
 # Restart configuration
 Restart=always
@@ -28,7 +28,7 @@ PrivateTmp=true
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true
-ReadWritePaths=/opt/nate/lovense-mcp
+ReadWritePaths=/opt/aicara/wolfe-lovense
 
 # Resource limits
 MemoryMax=512M

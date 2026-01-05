@@ -9,7 +9,7 @@ echo "======================================"
 echo ""
 
 # Configuration
-INSTALL_DIR="/opt/nate/lovense-mcp"
+INSTALL_DIR="/opt/aicara/wolfe-lovense"
 SERVICE_FILE="lovense-mcp.service"
 VENV_DIR="$INSTALL_DIR/venv"
 
@@ -48,27 +48,25 @@ echo "  IP: $GAME_IP"
 echo "  Port: $GAME_PORT"
 echo ""
 
-# Step 3: Copy files
-echo "📋 Copying MCP server files..."
-cp /home/claude/Enhanced_Lovense_MCP.py "$INSTALL_DIR/"
-chmod +x "$INSTALL_DIR/Enhanced_Lovense_MCP.py"
+# Get script directory for service file reference
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# Step 4: Create virtual environment
+# Step 3: Create virtual environment
 echo ""
 echo "🐍 Setting up Python virtual environment..."
 python3 -m venv "$VENV_DIR"
 source "$VENV_DIR/bin/activate"
 
-# Step 5: Install dependencies
+# Step 4: Install dependencies
 echo ""
 echo "📦 Installing dependencies..."
 pip install --upgrade pip
 pip install mcp>=1.8.1 requests>=2.31.0
 
-# Step 6: Update service file with actual values
+# Step 5: Update service file with actual values
 echo ""
 echo "⚙️  Configuring systemd service..."
-sed "s|GAME_MODE_IP=.*|GAME_MODE_IP=$GAME_IP\"|g" /home/claude/lovense-mcp.service | \
+sed "s|GAME_MODE_IP=.*|GAME_MODE_IP=$GAME_IP\"|g" "$SCRIPT_DIR/lovense-mcp.service" | \
 sed "s|GAME_MODE_PORT=.*|GAME_MODE_PORT=$GAME_PORT\"|g" > /tmp/lovense-mcp.service
 
 # Install service file
@@ -76,12 +74,12 @@ cp /tmp/lovense-mcp.service /etc/systemd/system/
 chown root:root /etc/systemd/system/lovense-mcp.service
 chmod 644 /etc/systemd/system/lovense-mcp.service
 
-# Step 7: Set permissions
+# Step 6: Set permissions
 echo ""
 echo "🔐 Setting permissions..."
 chown -R "$ACTUAL_USER:$ACTUAL_USER" "$INSTALL_DIR"
 
-# Step 8: Enable and start service
+# Step 7: Enable and start service
 echo ""
 echo "🚀 Starting Lovense MCP service..."
 systemctl daemon-reload
@@ -91,7 +89,7 @@ systemctl start lovense-mcp
 # Wait a moment for service to start
 sleep 2
 
-# Step 9: Check status
+# Step 8: Check status
 echo ""
 echo "✅ Installation complete!"
 echo ""
