@@ -9,7 +9,7 @@ echo "======================================"
 echo ""
 
 # Configuration
-INSTALL_DIR="/opt/nate/lovense-mcp"
+INSTALL_DIR="/opt/aicara/wolfe-lovense"
 SERVICE_FILE="lovense-mcp.service"
 VENV_DIR="$INSTALL_DIR/venv"
 
@@ -50,7 +50,8 @@ echo ""
 
 # Step 3: Copy files
 echo "📋 Copying MCP server files..."
-cp /home/claude/Enhanced_Lovense_MCP.py "$INSTALL_DIR/"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cp "$SCRIPT_DIR/Enhanced_Lovense_MCP.py" "$INSTALL_DIR/"
 chmod +x "$INSTALL_DIR/Enhanced_Lovense_MCP.py"
 
 # Step 4: Create virtual environment
@@ -68,7 +69,7 @@ pip install mcp>=1.8.1 requests>=2.31.0
 # Step 6: Update service file with actual values
 echo ""
 echo "⚙️  Configuring systemd service..."
-sed "s|GAME_MODE_IP=.*|GAME_MODE_IP=$GAME_IP\"|g" /home/claude/lovense-mcp.service | \
+sed "s|GAME_MODE_IP=.*|GAME_MODE_IP=$GAME_IP\"|g" "$SCRIPT_DIR/lovense-mcp.service" | \
 sed "s|GAME_MODE_PORT=.*|GAME_MODE_PORT=$GAME_PORT\"|g" > /tmp/lovense-mcp.service
 
 # Install service file
