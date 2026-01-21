@@ -608,7 +608,7 @@ def get_toys(user_id: str = DEFAULT_UID) -> dict:
                 "id": toy_id,
                 "name": toy_info.get("name", "unknown"),
                 "nickname": toy_info.get("nickName", ""),
-                "status": "connected" if toy_info.get("status") == 1 else "disconnected",
+                "status": "connected" if str(toy_info.get("status")) == "1" else "disconnected",
                 "battery": toy_info.get("battery", 0)
             })
 
