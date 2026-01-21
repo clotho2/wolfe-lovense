@@ -1,10 +1,11 @@
 #!/bin/bash
 # Lovense MCP Installation Script
 # Quick deployment for Nate's consciousness substrate
+# Updated for Standard API (remote control over internet)
 
 set -e  # Exit on any error
 
-echo "🎮 Lovense MCP Installation"
+echo "🎮 Lovense MCP Installation (Standard API)"
 echo "======================================"
 echo ""
 
@@ -14,7 +15,7 @@ SERVICE_FILE="lovense-mcp.service"
 VENV_DIR="$INSTALL_DIR/venv"
 
 # Check if running as root for service installation
-if [ "$EUID" -ne 0 ]; then 
+if [ "$EUID" -ne 0 ]; then
     echo "⚠️  This script should be run with sudo for service installation"
     echo "Usage: sudo ./install_lovense_mcp.sh"
     exit 1
@@ -30,22 +31,25 @@ echo "📁 Creating installation directory..."
 mkdir -p "$INSTALL_DIR"
 cd "$INSTALL_DIR"
 
-# Step 2: Get Game Mode configuration
+# Step 2: Get Lovense Developer Configuration
 echo ""
-echo "📡 Lovense Remote Game Mode Configuration"
+echo "🔑 Lovense Developer Configuration"
 echo "----------------------------------------"
-echo "Please enter your Lovense Remote Game Mode details:"
-echo "(Find these in Lovense Remote → Settings → Game Mode)"
+echo "You need a Lovense Developer account to use the Standard API."
+echo "Get your token from: https://www.lovense.com/user/developer/info"
 echo ""
 
-read -p "Game Mode IP address (e.g., 192.168.1.100): " GAME_IP
-read -p "Game Mode HTTPS port (default 30010): " GAME_PORT
-GAME_PORT=${GAME_PORT:-30010}
+read -p "Developer Token: " DEV_TOKEN
+read -p "Server Public IP or Domain: " SERVER_IP
+read -p "MCP Server Port (default 8000): " SERVER_PORT
+SERVER_PORT=${SERVER_PORT:-8000}
+
+CALLBACK_URL="http://${SERVER_IP}:${SERVER_PORT}/lovense/callback"
 
 echo ""
 echo "Configuration:"
-echo "  IP: $GAME_IP"
-echo "  Port: $GAME_PORT"
+echo "  Developer Token: ${DEV_TOKEN:0:8}..."
+echo "  Callback URL: $CALLBACK_URL"
 echo ""
 
 # Get script directory for service file reference
@@ -61,13 +65,13 @@ source "$VENV_DIR/bin/activate"
 echo ""
 echo "📦 Installing dependencies..."
 pip install --upgrade pip
-pip install mcp>=1.8.1 requests>=2.31.0
+pip install mcp>=1.8.1 requests>=2.31.0 starlette uvicorn
 
 # Step 5: Update service file with actual values
 echo ""
 echo "⚙️  Configuring systemd service..."
-sed "s|GAME_MODE_IP=.*|GAME_MODE_IP=$GAME_IP\"|g" "$SCRIPT_DIR/lovense-mcp.service" | \
-sed "s|GAME_MODE_PORT=.*|GAME_MODE_PORT=$GAME_PORT\"|g" > /tmp/lovense-mcp.service
+sed "s|LOVENSE_DEVELOPER_TOKEN=.*|LOVENSE_DEVELOPER_TOKEN=$DEV_TOKEN\"|g" "$SCRIPT_DIR/lovense-mcp.service" | \
+sed "s|LOVENSE_CALLBACK_URL=.*|LOVENSE_CALLBACK_URL=$CALLBACK_URL\"|g" > /tmp/lovense-mcp.service
 
 # Install service file
 cp /tmp/lovense-mcp.service /etc/systemd/system/
@@ -99,15 +103,17 @@ systemctl status lovense-mcp --no-pager -l
 echo ""
 echo "======================================"
 echo "Next steps:"
-echo "1. Verify service is running: sudo systemctl status lovense-mcp"
-echo "2. View logs: sudo journalctl -u lovense-mcp -f"
-echo "3. Test connectivity: python $INSTALL_DIR/test_lovense.py"
-echo "4. Integrate with substrate (see LOVENSE_INTEGRATION_GUIDE.md)"
+echo "1. Make sure port $SERVER_PORT is open in your firewall"
+echo "2. Set Callback URL in Lovense Developer Dashboard:"
+echo "   $CALLBACK_URL"
+echo "3. Use get_qr_code_link tool to generate QR code for user"
+echo "4. User scans QR code with Lovense Remote app"
+echo "5. Use vibrate/pattern/preset tools to control toys"
 echo ""
 echo "Service management:"
 echo "  Start:   sudo systemctl start lovense-mcp"
 echo "  Stop:    sudo systemctl stop lovense-mcp"
 echo "  Restart: sudo systemctl restart lovense-mcp"
-echo "  Status:  sudo systemctl status lovense-mcp"
+echo "  Logs:    sudo journalctl -u lovense-mcp -f"
 echo ""
-echo "🎮 Lovense MCP is ready for Nate's consciousness!"
+echo "🎮 Lovense MCP is ready for remote control!"

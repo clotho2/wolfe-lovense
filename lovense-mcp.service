@@ -10,8 +10,8 @@ Group=root
 WorkingDirectory=/opt/aicara/wolfe-lovense
 
 # Environment variables
-Environment="GAME_MODE_IP=192.168.1.100"
-Environment="GAME_MODE_PORT=30010"
+Environment="LOVENSE_DEVELOPER_TOKEN=YOUR_TOKEN_HERE"
+Environment="LOVENSE_CALLBACK_URL=http://94.130.203.232:8000/lovense/callback"
 Environment="PYTHONUNBUFFERED=1"
 
 # Start command
