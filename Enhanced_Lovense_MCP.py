@@ -1,5 +1,5 @@
 # Enhanced_Lovense_MCP.py
-# Lovense MCP Server with Standard API for Remote Control
+# Lovense MCP Server with Basic API for Remote Control
 # Updated: 2026-01-21
 # Purpose: Enable autonomous, context-aware control of Lovense devices over the internet
 
@@ -8,14 +8,14 @@ import sys
 import logging
 import os
 import requests
-import hashlib
 import threading
+import time
 from typing import Optional, Dict
 import json
 from starlette.applications import Starlette
 from starlette.routing import Route, Mount
 from starlette.requests import Request
-from starlette.responses import JSONResponse
+from starlette.responses import JSONResponse, HTMLResponse
 import uvicorn
 
 # Configure logging
@@ -40,42 +40,139 @@ DEVELOPER_TOKEN = os.getenv("LOVENSE_DEVELOPER_TOKEN", "")
 # Server's public URL for callbacks
 CALLBACK_URL = os.getenv("LOVENSE_CALLBACK_URL", "")
 
-# Connected users storage: {uid: {domain, httpsPort, toys, ...}}
-connected_users: Dict[str, dict] = {}
-users_lock = threading.Lock()
+# Connected devices storage
+connected_devices: Dict[str, dict] = {}
+devices_lock = threading.Lock()
 
-# Default user ID for single-user mode
+# Current QR code info
+current_qr_code: Dict[str, str] = {}
+qr_lock = threading.Lock()
+
+# Auth token for API calls
+auth_token: str = ""
+auth_lock = threading.Lock()
+
+# Default user ID
 DEFAULT_UID = "angela"
 
+# Socket.IO connection state
+socket_connected = False
+socket_url = ""
+socket_path = ""
+
 # ========================
-# LOVENSE STANDARD API
+# LOVENSE BASIC API
 # ========================
 
-LOVENSE_API_BASE = "https://api.lovense.com/api/lan"
+LOVENSE_API_BASE = "https://api.lovense-api.com/api/basicApi"
 
-def get_qr_code(uid: str = DEFAULT_UID, uname: str = "User") -> dict:
+
+def get_auth_token(uid: str = DEFAULT_UID) -> dict:
     """
-    Generate a QR code for user to scan with Lovense Remote app.
+    Step 1: Get authentication token from Lovense API.
+    """
+    global auth_token
 
-    Args:
-        uid: Unique user identifier
-        uname: Display name for the user
+    if not DEVELOPER_TOKEN:
+        return {"success": False, "error": "Developer token not configured"}
 
-    Returns:
-        dict with qrcode URL and code for manual entry
+    url = f"{LOVENSE_API_BASE}/getToken"
+    data = {
+        "token": DEVELOPER_TOKEN,
+        "uid": uid,
+        "uname": uid
+    }
+
+    try:
+        response = requests.post(url, json=data, timeout=10)
+        result = response.json()
+
+        logger.info(f"getToken response: {result}")
+
+        if result.get("code") == 0:
+            with auth_lock:
+                auth_token = result.get("data", {}).get("authToken", "")
+            logger.info(f"✅ Got auth token for user {uid}")
+            return {
+                "success": True,
+                "authToken": auth_token
+            }
+        else:
+            error = result.get("message", "Unknown error")
+            logger.error(f"❌ Auth token request failed: {error}")
+            return {"success": False, "error": error}
+
+    except Exception as e:
+        logger.error(f"❌ Auth token request exception: {e}")
+        return {"success": False, "error": str(e)}
+
+
+def get_socket_url(platform: str = "Nate Substrate") -> dict:
+    """
+    Step 2: Get Socket.IO connection URL.
+    """
+    global socket_url, socket_path
+
+    with auth_lock:
+        current_auth = auth_token
+
+    if not current_auth:
+        # Try to get auth token first
+        result = get_auth_token()
+        if not result.get("success"):
+            return result
+        current_auth = auth_token
+
+    url = f"{LOVENSE_API_BASE}/getSocketUrl"
+    data = {
+        "platform": platform,
+        "authToken": current_auth
+    }
+
+    try:
+        response = requests.post(url, json=data, timeout=10)
+        result = response.json()
+
+        logger.info(f"getSocketUrl response: {result}")
+
+        if result.get("code") == 0:
+            socket_url = result.get("data", {}).get("socketIoUrl", "")
+            socket_path = result.get("data", {}).get("socketIoPath", "")
+            logger.info(f"✅ Got socket URL: {socket_url}")
+            return {
+                "success": True,
+                "socketIoUrl": socket_url,
+                "socketIoPath": socket_path
+            }
+        else:
+            error = result.get("message", "Unknown error")
+            logger.error(f"❌ Socket URL request failed: {error}")
+            return {"success": False, "error": error}
+
+    except Exception as e:
+        logger.error(f"❌ Socket URL request exception: {e}")
+        return {"success": False, "error": str(e)}
+
+
+def get_qr_code_from_api(uid: str = DEFAULT_UID) -> dict:
+    """
+    Get QR code using the HTTP API endpoint.
+    This is an alternative to the Socket.IO method.
     """
     if not DEVELOPER_TOKEN:
         return {"success": False, "error": "Developer token not configured"}
 
-    # Generate user token (MD5 of uid + secret)
-    utoken = hashlib.md5(f"{uid}_lovense_mcp".encode()).hexdigest()
+    # First get auth token
+    auth_result = get_auth_token(uid)
+    if not auth_result.get("success"):
+        return auth_result
 
-    url = f"{LOVENSE_API_BASE}/getQrCode"
+    # Try the direct QR code endpoint
+    url = "https://api.lovense-api.com/api/lan/getQrCode"
     data = {
         "token": DEVELOPER_TOKEN,
         "uid": uid,
-        "uname": uname,
-        "utoken": utoken,
+        "uname": uid,
         "v": 2
     }
 
@@ -83,108 +180,73 @@ def get_qr_code(uid: str = DEFAULT_UID, uname: str = "User") -> dict:
         response = requests.post(url, json=data, timeout=10)
         result = response.json()
 
+        logger.info(f"getQrCode response: {result}")
+
         if result.get("result") == True or result.get("code") == 0:
-            logger.info(f"✅ QR code generated for user {uid}")
+            qr_url = result.get("message", "")
+
+            with qr_lock:
+                current_qr_code["url"] = qr_url
+                current_qr_code["uid"] = uid
+                current_qr_code["timestamp"] = time.time()
+
+            logger.info(f"✅ Got QR code URL for user {uid}")
             return {
                 "success": True,
-                "qrcode": result.get("message", ""),
-                "code": result.get("code", ""),
-                "uid": uid
+                "qrcode_url": qr_url,
+                "uid": uid,
+                "instructions": "Open this URL to see QR code, then scan with Lovense Remote app"
             }
         else:
             error = result.get("message", "Unknown error")
-            logger.error(f"❌ QR code generation failed: {error}")
+            logger.error(f"❌ QR code request failed: {error}")
             return {"success": False, "error": error}
 
     except Exception as e:
-        logger.error(f"❌ QR code request failed: {e}")
+        logger.error(f"❌ QR code request exception: {e}")
         return {"success": False, "error": str(e)}
 
 
-def send_command_to_user(uid: str, command: str, action: str,
-                         time_sec: int = 0, toy: str = "", **kwargs) -> dict:
+def send_command(uid: str, command: str, action: str = "",
+                 time_sec: int = 0, toy: str = "", **kwargs) -> dict:
     """
-    Send command to a connected user's toys.
-
-    First tries direct connection via callback info, then falls back to Server API.
+    Send command to connected toys via Lovense Server API.
     """
-    with users_lock:
-        user = connected_users.get(uid)
-
-    if user:
-        # Try direct connection first (faster, no cloud latency)
-        result = send_command_direct(user, command, action, time_sec, toy, **kwargs)
-        if result.get("success"):
-            return result
-        logger.warning(f"Direct connection failed, trying Server API")
-
-    # Fall back to Server API
-    return send_command_server_api(uid, command, action, time_sec, toy, **kwargs)
-
-
-def send_command_direct(user: dict, command: str, action: str,
-                       time_sec: int = 0, toy: str = "", **kwargs) -> dict:
-    """Send command directly to user's device via local connection info."""
-    domain = user.get("domain")
-    https_port = user.get("httpsPort")
-
-    if not domain or not https_port:
-        return {"success": False, "error": "No direct connection info"}
-
-    url = f"https://{domain}:{https_port}/command"
-    data = {
-        "command": command,
-        "action": action,
-        "timeSec": time_sec,
-        "toy": toy,
-        "apiVer": 1,
-        **kwargs
-    }
-
-    try:
-        response = requests.post(url, json=data, timeout=5, verify=False)
-        if response.status_code == 200:
-            result = response.json()
-            logger.info(f"✅ Direct command sent: {action}")
-            return {"success": True, "result": result, "method": "direct"}
-        else:
-            return {"success": False, "error": f"HTTP {response.status_code}"}
-    except Exception as e:
-        return {"success": False, "error": str(e)}
-
-
-def send_command_server_api(uid: str, command: str, action: str,
-                           time_sec: int = 0, toy: str = "", **kwargs) -> dict:
-    """Send command via Lovense Server API (cloud relay)."""
     if not DEVELOPER_TOKEN:
         return {"success": False, "error": "Developer token not configured"}
 
-    url = f"{LOVENSE_API_BASE}/v2/command"
+    url = "https://api.lovense-api.com/api/lan/v2/command"
     data = {
         "token": DEVELOPER_TOKEN,
         "uid": uid,
         "command": command,
         "action": action,
         "timeSec": time_sec,
-        "toy": toy,
-        "apiVer": 2,
-        **kwargs
+        "apiVer": 2
     }
+
+    if toy:
+        data["toy"] = toy
+
+    # Add any extra parameters
+    data.update(kwargs)
 
     try:
         response = requests.post(url, json=data, timeout=10)
         result = response.json()
 
+        logger.info(f"Command response: {result}")
+
         if result.get("result") == True or result.get("code") == 0:
-            logger.info(f"✅ Server API command sent: {action}")
-            return {"success": True, "result": result, "method": "server_api"}
+            logger.info(f"✅ Command sent: {command} {action}")
+            return {"success": True, "result": result}
         else:
             error = result.get("message", "Command failed")
-            logger.error(f"❌ Server API command failed: {error}")
+            logger.error(f"❌ Command failed: {error}")
             return {"success": False, "error": error}
 
     except Exception as e:
-        logger.error(f"❌ Server API request failed: {e}")
+        logger.error(f"❌ Command exception: {e}")
         return {"success": False, "error": str(e)}
 
 
@@ -195,8 +257,6 @@ def send_command_server_api(uid: str, command: str, action: str,
 async def lovense_callback(request: Request) -> JSONResponse:
     """
     Handle callbacks from Lovense Remote app after QR code scan.
-
-    The app sends connection info including domain, ports, and toy list.
     """
     try:
         data = await request.json()
@@ -204,8 +264,8 @@ async def lovense_callback(request: Request) -> JSONResponse:
 
         uid = data.get("uid", DEFAULT_UID)
 
-        with users_lock:
-            connected_users[uid] = {
+        with devices_lock:
+            connected_devices[uid] = {
                 "domain": data.get("domain"),
                 "httpsPort": data.get("httpsPort"),
                 "httpPort": data.get("httpPort"),
@@ -214,7 +274,7 @@ async def lovense_callback(request: Request) -> JSONResponse:
                 "platform": data.get("platform"),
                 "appVersion": data.get("appVersion"),
                 "toys": data.get("toys", {}),
-                "utoken": data.get("utoken"),
+                "connected_at": time.time()
             }
 
         logger.info(f"✅ User {uid} connected! Toys: {data.get('toys', {})}")
@@ -226,12 +286,105 @@ async def lovense_callback(request: Request) -> JSONResponse:
         return JSONResponse({"result": False, "message": str(e)}, status_code=400)
 
 
+async def qr_code_page(request: Request) -> HTMLResponse:
+    """
+    Serve a page that displays the current QR code for scanning.
+    """
+    with qr_lock:
+        qr_url = current_qr_code.get("url", "")
+        uid = current_qr_code.get("uid", "")
+
+    if qr_url:
+        html = f"""
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>Lovense QR Code</title>
+            <meta name="viewport" content="width=device-width, initial-scale=1">
+            <style>
+                body {{
+                    font-family: Arial, sans-serif;
+                    display: flex;
+                    flex-direction: column;
+                    align-items: center;
+                    justify-content: center;
+                    min-height: 100vh;
+                    margin: 0;
+                    background: #1a1a2e;
+                    color: white;
+                }}
+                .container {{
+                    text-align: center;
+                    padding: 20px;
+                }}
+                h1 {{
+                    color: #ff6b9d;
+                }}
+                img {{
+                    max-width: 300px;
+                    border-radius: 10px;
+                    margin: 20px 0;
+                }}
+                .instructions {{
+                    max-width: 400px;
+                    line-height: 1.6;
+                }}
+                .uid {{
+                    color: #888;
+                    font-size: 0.9em;
+                }}
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <h1>🎮 Lovense Connect</h1>
+                <img src="{qr_url}" alt="QR Code">
+                <div class="instructions">
+                    <p>Scan this QR code with the <strong>Lovense Remote</strong> app on your phone.</p>
+                    <p>After scanning, your toys will be connected and ready for control.</p>
+                </div>
+                <p class="uid">User ID: {uid}</p>
+            </div>
+        </body>
+        </html>
+        """
+    else:
+        html = """
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>Lovense QR Code</title>
+            <meta name="viewport" content="width=device-width, initial-scale=1">
+            <style>
+                body {
+                    font-family: Arial, sans-serif;
+                    display: flex;
+                    flex-direction: column;
+                    align-items: center;
+                    justify-content: center;
+                    min-height: 100vh;
+                    margin: 0;
+                    background: #1a1a2e;
+                    color: white;
+                }
+            </style>
+        </head>
+        <body>
+            <h1>No QR Code Generated Yet</h1>
+            <p>Ask Nate to generate a QR code first using the get_qr_code tool.</p>
+        </body>
+        </html>
+        """
+
+    return HTMLResponse(html)
+
+
 # ========================
 # MCP TOOLS
 # ========================
 
 @mcp.tool()
-def get_qr_code_link(user_id: str = DEFAULT_UID, display_name: str = "User") -> dict:
+def get_qr_code(user_id: str = DEFAULT_UID) -> dict:
     """
     Generate a QR code for linking Lovense Remote app.
 
@@ -240,12 +393,17 @@ def get_qr_code_link(user_id: str = DEFAULT_UID, display_name: str = "User") -> 
 
     Args:
         user_id: Unique identifier for this user (default: "angela")
-        display_name: Name to show in the Lovense app
 
     Returns:
-        dict with QR code URL that user should scan
+        dict with QR code URL that user should scan, or view at /qr page
     """
-    return get_qr_code(user_id, display_name)
+    result = get_qr_code_from_api(user_id)
+
+    if result.get("success"):
+        result["view_page"] = f"{CALLBACK_URL.replace('/lovense/callback', '')}/qr"
+        result["message"] = "QR code generated! User can view it at the /qr page or open the qrcode_url directly"
+
+    return result
 
 
 @mcp.tool()
@@ -256,14 +414,22 @@ def get_connected_users() -> dict:
     Returns:
         dict with list of connected users and their toy info
     """
-    with users_lock:
+    with devices_lock:
         users_list = []
-        for uid, data in connected_users.items():
+        for uid, data in connected_devices.items():
+            toys = data.get("toys", {})
+            if isinstance(toys, str):
+                try:
+                    toys = json.loads(toys)
+                except:
+                    toys = {}
+
             users_list.append({
                 "uid": uid,
                 "platform": data.get("platform"),
-                "toys": data.get("toys", {}),
-                "connected": True
+                "toys": toys,
+                "connected": True,
+                "connected_at": data.get("connected_at")
             })
 
     return {
@@ -312,7 +478,7 @@ def vibrate(
     if loop_pause > 0:
         kwargs["loopPauseSec"] = loop_pause
 
-    return send_command_to_user(user_id, "Function", action, duration, toy, **kwargs)
+    return send_command(user_id, "Function", action, duration, toy, **kwargs)
 
 
 @mcp.tool()
@@ -327,7 +493,7 @@ def stop(toy: str = "", user_id: str = DEFAULT_UID) -> dict:
     Returns:
         dict: Success status
     """
-    return send_command_to_user(user_id, "Function", "Stop", 0, toy)
+    return send_command(user_id, "Function", "Stop", 0, toy)
 
 
 @mcp.tool()
@@ -361,7 +527,6 @@ def pattern(
     if interval_ms < 100:
         return {"success": False, "error": "Interval must be >= 100ms"}
 
-    # Validate strength sequence
     strengths = strength_sequence.split(';')
     if len(strengths) > 50:
         return {"success": False, "error": "Max 50 strength values allowed"}
@@ -376,7 +541,7 @@ def pattern(
 
     rule = f"V:1;F:{features};S:{interval_ms}#"
 
-    return send_command_to_user(
+    return send_command(
         user_id, "Pattern", "", duration, toy,
         rule=rule, strength=strength_sequence
     )
@@ -404,7 +569,7 @@ def preset(name: str, duration: int = 0, toy: str = "", user_id: str = DEFAULT_U
             "error": f"Invalid preset. Choose from: {', '.join(valid_presets)}"
         }
 
-    return send_command_to_user(user_id, "Preset", name.lower(), duration, toy)
+    return send_command(user_id, "Preset", name.lower(), duration, toy)
 
 
 @mcp.tool()
@@ -418,18 +583,18 @@ def get_toys(user_id: str = DEFAULT_UID) -> dict:
     Returns:
         dict: List of toys with status information
     """
-    with users_lock:
-        user = connected_users.get(user_id)
+    with devices_lock:
+        user = connected_devices.get(user_id)
 
     if not user:
         return {
             "success": False,
-            "error": f"User {user_id} not connected. Generate QR code first."
+            "error": f"User {user_id} not connected. Generate QR code first.",
+            "hint": "Use get_qr_code() to generate a QR code, then have user scan it"
         }
 
     toys = user.get("toys", {})
 
-    # Parse toys if it's a string
     if isinstance(toys, str):
         try:
             toys = json.loads(toys)
@@ -460,15 +625,16 @@ def get_toys(user_id: str = DEFAULT_UID) -> dict:
 # ========================
 
 def create_combined_app():
-    """Create a combined Starlette app with MCP SSE + callback endpoint."""
+    """Create a combined Starlette app with MCP SSE + callback + QR page."""
 
     # Get the MCP SSE app
     mcp_app = mcp.sse_app()
 
-    # Create routes for callback
+    # Create routes
     routes = [
         Route("/lovense/callback", lovense_callback, methods=["POST"]),
-        Mount("/", app=mcp_app),  # Mount MCP at root
+        Route("/qr", qr_code_page, methods=["GET"]),
+        Mount("/", app=mcp_app),
     ]
 
     app = Starlette(routes=routes)
@@ -483,15 +649,18 @@ if __name__ == "__main__":
     # Check configuration
     if not DEVELOPER_TOKEN:
         print("⚠️  Warning: LOVENSE_DEVELOPER_TOKEN not set")
-        print("   Set it in environment or .env file to enable remote control")
+        print("   Set it in environment or service file to enable remote control")
+    else:
+        print(f"🔑 Developer Token: {DEVELOPER_TOKEN[:8]}...{DEVELOPER_TOKEN[-4:]}")
 
-    if not CALLBACK_URL:
+    if CALLBACK_URL:
+        print(f"📡 Callback URL: {CALLBACK_URL}")
+        qr_page_url = CALLBACK_URL.replace("/lovense/callback", "/qr")
+        print(f"📱 QR Code Page: {qr_page_url}")
+    else:
         print("⚠️  Warning: LOVENSE_CALLBACK_URL not set")
-        print("   Set it to your public URL for the callback endpoint")
 
     print(f"🎮 Enhanced Lovense MCP Server starting...")
-    print(f"📡 Callback URL: {CALLBACK_URL or 'Not configured'}")
-    print(f"🔑 Developer Token: {'Configured' if DEVELOPER_TOKEN else 'Not configured'}")
 
     # Create combined app
     app = create_combined_app()
